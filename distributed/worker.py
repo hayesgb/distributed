@@ -94,6 +94,7 @@ from distributed.utils import (
     recursive_to_dict,
     silence_logging,
     thread_state,
+    wait_for,
     warn_on_duration,
 )
 from distributed.utils_comm import gather_from_workers, pack_data, retry_operation
@@ -1576,8 +1577,16 @@ class Worker(BaseWorker, ServerNode):
                         # otherwise
                         c.close()
 
-        await self.scheduler.close_rpc()
-        self._workdir.release()
+            with suppress(EnvironmentError, TimeoutError):
+                if report and self.contact_address is not None:
+                    await wait_for(
+                        self.scheduler.unregister(
+                            address=self.contact_address, safe=safe
+                        ),
+                        timeout,
+                    )
+            await self.scheduler.close_rpc()
+            self._workdir.release()
 
         self.stop_services()
 

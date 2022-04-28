@@ -30,6 +30,15 @@ from itertools import count
 from time import sleep
 from typing import IO, Any, Generator, Iterator, Literal
 
+from distributed.compatibility import MACOS
+from distributed.scheduler import Scheduler
+from distributed.utils import wait_for
+
+try:
+    import ssl
+except ImportError:
+    ssl = None  # type: ignore
+
 import pytest
 import yaml
 from tlz import assoc, memoize, merge
@@ -454,7 +463,7 @@ def check_active_rpc(loop, active_rpc_timeout=1):
         )
 
     async def wait():
-        await async_wait_for(
+        await async_wait_for_condition(
             lambda: len(set(rpc.active) - active_before) == 0,
             timeout=active_rpc_timeout,
             fail_func=fail,
@@ -697,10 +706,27 @@ def cluster(
             client.close()
 
 
-def gen_test(
-    timeout: float = _TEST_TIMEOUT,
-    clean_kwargs: dict[str, Any] | None = None,
-) -> Callable[[Callable], Callable]:
+async def disconnect(addr, timeout=3, rpc_kwargs=None):
+    rpc_kwargs = rpc_kwargs or {}
+
+    async def do_disconnect():
+        with rpc(addr, **rpc_kwargs) as w:
+            # If the worker was killed hard (e.g. sigterm) during test runtime,
+            # we do not know at this point and may not be able to connect
+            with suppress(EnvironmentError, CommClosedError):
+                # Do not request a reply since comms will be closed by the
+                # worker before a reply can be made and we will always trigger
+                # the timeout
+                await w.terminate(reply=False)
+
+    await wait_for(do_disconnect(), timeout=timeout)
+
+
+async def disconnect_all(addresses, timeout=3, rpc_kwargs=None):
+    await asyncio.gather(*(disconnect(addr, timeout, rpc_kwargs) for addr in addresses))
+
+
+def gen_test(timeout: float = _TEST_TIMEOUT) -> Callable[[Callable], Callable]:
     """Coroutine test
 
     @pytest.mark.parametrize("param", [1, 2, 3])
@@ -994,7 +1020,7 @@ def gen_cluster(
                         try:
                             coro = func(*args, *outer_args, **kwargs)
                             task = asyncio.create_task(coro)
-                            coro2 = asyncio.wait_for(asyncio.shield(task), timeout)
+                            coro2 = wait_for(asyncio.shield(task), timeout)
                             result = await coro2
                             validate_state(s, *workers)
 
@@ -1045,12 +1071,18 @@ def gen_cluster(
                                 )
                             raise
 
-                    try:
-                        c = default_client()
-                    except ValueError:
-                        pass
-                    else:
-                        await c._close(fast=True)
+                        finally:
+                            if client and c.status not in ("closing", "closed"):
+                                await c._close(fast=s.status == Status.closed)
+                            await end_cluster(s, workers)
+                            await wait_for(cleanup_global_workers(), 1)
+
+                        try:
+                            c = await default_client()
+                        except ValueError:
+                            pass
+                        else:
+                            await c._close(fast=True)
 
                     def get_unclosed():
                         return [c for c in Comm._instances if not c.closed()] + [
@@ -1250,7 +1282,8 @@ def popen(
                     print(err.decode() if isinstance(err, bytes) else err)
 
 
-def wait_for(predicate, timeout, fail_func=None, period=0.05):
+
+def wait_for_condition(predicate, timeout, fail_func=None, period=0.05):
     deadline = time() + timeout
     while not predicate():
         sleep(period)
@@ -1260,7 +1293,7 @@ def wait_for(predicate, timeout, fail_func=None, period=0.05):
             pytest.fail(f"condition not reached until {timeout} seconds")
 
 
-async def async_wait_for(predicate, timeout, fail_func=None, period=0.05):
+async def async_wait_for_condition(predicate, timeout, fail_func=None, period=0.05):
     deadline = time() + timeout
     while not predicate():
         await asyncio.sleep(period)
@@ -1867,7 +1900,7 @@ class _LockedCommPool(ConnectionPool):
     >>> async def ping_pong():
             return await w.rpc(remote_address).ping()
     >>> with pytest.raises(asyncio.TimeoutError):
-    >>>     await asyncio.wait_for(ping_pong(), 0.01)
+    >>>     await wait_for(ping_pong(), 0.01)
     >>> read_event.set()
     >>> await ping_pong()
     """

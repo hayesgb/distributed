@@ -12,7 +12,7 @@ from dask.utils import parse_timedelta
 
 from distributed.compatibility import PeriodicCallback
 from distributed.metrics import time
-from distributed.utils import Deadline, SyncMethodMixin, log_errors
+from distributed.utils import Deadline, SyncMethodMixin, log_errors, wait_for
 from distributed.utils_comm import retry_operation
 from distributed.worker import get_client, get_worker
 
@@ -149,9 +149,7 @@ class SemaphoreExtension:
             # If acquiring fails, we wait for the event to be set, i.e. something has
             # been released and we can try to acquire again (continue loop)
             if not result:
-                future = asyncio.wait_for(
-                    self.events[name].wait(), timeout=deadline.remaining
-                )
+                future = wait_for(self.events[name].wait(), timeout=w.leftover())
                 try:
                     await future
                     continue
@@ -162,15 +160,15 @@ class SemaphoreExtension:
                 lease_id,
                 name,
                 result,
-                deadline.elapsed,
+                deadline.elapsed(),
             )
             # We're about to return, so the lease is no longer "pending"
             self.metrics["average_pending_lease_time"][name] = (
-                self.metrics["average_pending_lease_time"][name] + deadline.elapsed
+                self.metrics["average_pending_lease_time"][name] + w.elapsed()
             ) / 2
             self.metrics["pending"][name] -= 1
 
-            return result
+        return result
 
     @log_errors
     def release(self, name=None, lease_id=None):

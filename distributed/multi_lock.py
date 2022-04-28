@@ -9,7 +9,7 @@ from collections.abc import Hashable
 from dask.utils import parse_timedelta
 
 from distributed.client import Client
-from distributed.utils import TimeoutError, log_errors
+from distributed.utils import TimeoutError, log_errors, wait_for
 from distributed.worker import get_worker
 
 logger = logging.getLogger(__name__)
@@ -112,23 +112,24 @@ class MultiLockExtension:
 
     @log_errors
     async def acquire(self, locks=None, id=None, timeout=None, num_locks=None):
-        if not self._request_locks(locks, id, num_locks):
-            assert id not in self.events
-            event = asyncio.Event()
-            self.events[id] = event
-            future = event.wait()
-            if timeout is not None:
-                future = asyncio.wait_for(future, timeout)
-            try:
-                await future
-            except TimeoutError:
-                self._refain_locks(locks, id)
-                return False
-            finally:
-                del self.events[id]
-        # At this point `id` acquired all `locks`
-        assert self.requests_left[id] == 0
-        return True
+        with log_errors():
+            if not self._request_locks(locks, id, num_locks):
+                assert id not in self.events
+                event = asyncio.Event()
+                self.events[id] = event
+                future = event.wait()
+                if timeout is not None:
+                    future = wait_for(future, timeout)
+                try:
+                    await future
+                except TimeoutError:
+                    self._refain_locks(locks, id)
+                    return False
+                finally:
+                    del self.events[id]
+            # At this point `id` acquired all `locks`
+            assert self.requests_left[id] == 0
+            return True
 
     @log_errors
     def release(self, id=None):

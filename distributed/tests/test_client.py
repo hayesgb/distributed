@@ -90,7 +90,7 @@ from distributed.utils_test import (
     BlockedGatherDep,
     TaskStateMetadataPlugin,
     _UnhashableCallable,
-    async_wait_for,
+    async_wait_for_condition,
     asyncinc,
     block_on_event,
     captured_logger,
@@ -469,16 +469,16 @@ def test_Future_release_sync(c):
     x = c.submit(div, 1, 1)
     x.result()
     x.release()
-    wait_for(lambda: not c.futures, timeout=0.3)
+    wait_for_condition(lambda: not c.futures, timeout=0.3)
 
     x = c.submit(slowinc, 1, delay=0.8)
     x.release()
-    wait_for(lambda: not c.futures, timeout=0.3)
+    wait_for_condition(lambda: not c.futures, timeout=0.3)
 
     x = c.submit(div, 1, 0)
     x.exception()
     x.release()
-    wait_for(lambda: not c.futures, timeout=0.3)
+    wait_for_condition(lambda: not c.futures, timeout=0.3)
 
 
 def test_short_tracebacks(loop, c):
@@ -3518,9 +3518,9 @@ def test_get_returns_early(c):
         result = c.get({"x": (throws, 1), "y": (block, event)}, ["x", "y"])
 
     # Futures should be released and forgotten
-    wait_for(lambda: not c.futures, timeout=1)
+    wait_for_condition(lambda: not c.futures, timeout=1)
     event.set()
-    wait_for(lambda: not any(c.processing().values()), timeout=3)
+    wait_for_condition(lambda: not any(c.processing().values()), timeout=3)
 
     x = c.submit(inc, 1)
     x.result()
@@ -6235,8 +6235,8 @@ async def test_instances(c, s, a, b):
 
 
 @gen_cluster(client=True)
-async def test_wait_for_workers(c, s, a, b):
-    future = asyncio.ensure_future(c.wait_for_workers(n_workers=3))
+async def test_wait_for_condition_workers(c, s, a, b):
+    future = asyncio.ensure_future(c.wait_for_condition_workers(n_workers=3))
     await asyncio.sleep(0.22)  # 2 chances
     assert not future.done()
 
@@ -6246,7 +6246,7 @@ async def test_wait_for_workers(c, s, a, b):
         assert time() < start + 1
 
     with pytest.raises(TimeoutError) as info:
-        await c.wait_for_workers(n_workers=10, timeout="1 ms")
+        await c.wait_for_condition_workers(n_workers=10, timeout="1 ms")
 
     assert "2/10" in str(info.value).replace(" ", "")
     assert "1 ms" in str(info.value)
@@ -7835,9 +7835,9 @@ async def test_benchmark_hardware_no_workers(c, s):
 
 
 @gen_cluster(client=True, nthreads=[])
-async def test_wait_for_workers_updates_info(c, s):
+async def test_wait_for_condition_workers_updates_info(c, s):
     async with Worker(s.address):
-        await c.wait_for_workers(1)
+        await c.wait_for_condition_workers(1)
         assert c.scheduler_info()["workers"]
 
 

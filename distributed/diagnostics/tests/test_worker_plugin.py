@@ -6,7 +6,7 @@ import warnings
 import pytest
 
 from distributed import Worker, WorkerPlugin
-from distributed.utils_test import async_wait_for, gen_cluster, inc
+from distributed.utils_test import async_wait_for_condition, gen_cluster, inc
 
 
 class MyPlugin(WorkerPlugin):

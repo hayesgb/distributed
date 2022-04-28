@@ -41,7 +41,7 @@ from distributed.core import ConnectionPool, Status, clean_exception, connect, r
 from distributed.metrics import time
 from distributed.protocol.pickle import dumps, loads
 from distributed.scheduler import KilledWorker, MemoryState, Scheduler, WorkerState
-from distributed.utils import TimeoutError
+from distributed.utils import TimeoutError, wait_for
 from distributed.utils_test import (
     NO_AMM,
     BlockedGatherDep,
@@ -667,7 +667,7 @@ async def test_no_valid_workers(client, s, a, b, c):
     assert s.tasks[x.key] in s.unrunnable
 
     with pytest.raises(TimeoutError):
-        await asyncio.wait_for(x, 0.05)
+        await wait_for(x, 0.05)
 
 
 @gen_cluster(client=True, nthreads=[("127.0.0.1", 1)] * 3)
@@ -698,7 +698,7 @@ async def test_no_workers(client, s, queue):
         assert ts.state == "no-worker"
 
     with pytest.raises(TimeoutError):
-        await asyncio.wait_for(x, 0.05)
+        await wait_for(x, 0.05)
 
     async with Worker(s.address, nthreads=1):
         await wait(x)
@@ -2793,8 +2793,15 @@ async def test_gather_bad_worker_removed(c, s, a, b):
             logging.getLogger("distributed.client")
         ) as client_logger:
             # Gather using the client (as an ordinary user would)
-            # Upon a missing key, the client will remove the bad worker and
-            # reschedule the computations
+            # Upon a missing key, the client will reschedule the computations
+            res = None
+            while not res:
+                try:
+                    # This reduces test runtime by about a second since we're
+                    # depending on a worker heartbeat for a reconnect.
+                    res = await wait_for(fin, 0.1)
+                except asyncio.TimeoutError:
+                    await a.heartbeat()
 
             # Both tasks are rescheduled onto `b`, since `a` was removed.
             assert await fin == b.address

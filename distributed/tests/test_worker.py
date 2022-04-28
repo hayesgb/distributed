@@ -53,7 +53,7 @@ from distributed.diagnostics.plugin import (
 )
 from distributed.metrics import time
 from distributed.protocol import pickle
-from distributed.scheduler import KilledWorker, Scheduler
+from distributed.scheduler import KilledWorker, Scheduler, wait_for
 from distributed.utils_test import (
     NO_AMM,
     BlockedExecute,
@@ -353,7 +353,7 @@ async def test_worker_waits_for_scheduler(connect_timeout):
         w = Worker("127.0.0.1:8724")
 
         with pytest.raises(TimeoutError):
-            await asyncio.wait_for(w, 3)
+            await wait_for(w, 3)
 
         assert w.status not in (Status.closed, Status.running, Status.paused)
         await w.close()
@@ -2150,7 +2150,7 @@ async def test_gather_dep_one_worker_always_busy(c, s, a, b):
     # effectively blocking H indefinitely
     a.transfer_outgoing_count = 10000000
 
-    h = c.submit(add, f, g, key="h", workers=[b.address])
+    fut = wait_for(h, 0.1)
 
     await wait_for_state(h.key, "waiting", b)
     assert b.state.tasks[f.key].state in ("flight", "fetch")

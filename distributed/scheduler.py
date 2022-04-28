@@ -107,6 +107,7 @@ from distributed.utils import (
     no_default,
     recursive_to_dict,
     validate_key,
+    wait_for,
 )
 from distributed.utils_comm import (
     gather_from_workers,
@@ -5758,42 +5759,28 @@ class Scheduler(SchedulerState, ServerNode):
                 )
             )
 
-            start = monotonic()
-            resps = await asyncio.gather(
-                *(
-                    asyncio.wait_for(
-                        # FIXME does not raise if the process fails to shut down,
-                        # see https://github.com/dask/distributed/pull/6427/files#r894917424
-                        # NOTE: Nanny will automatically restart worker process when it's killed
-                        nanny.kill(
-                            reason="scheduler-restart",
-                            timeout=timeout,
-                        ),
-                        timeout,
-                    )
-                    for nanny in nannies
-                ),
-                return_exceptions=True,
-            )
-            # NOTE: the `WorkerState` entries for these workers will be removed
-            # naturally when they disconnect from the scheduler.
-
-            # Remove any workers that failed to shut down, so we can guarantee
-            # that after `restart`, there are no old workers around.
-            bad_nannies = [
-                addr for addr, resp in zip(nanny_workers, resps) if resp is not None
-            ]
-            if bad_nannies:
-                await asyncio.gather(
-                    *(
-                        self.remove_worker(addr, stimulus_id=stimulus_id)
-                        for addr in bad_nannies
-                    )
+                resps = All(
+                    [
+                        nanny.restart(
+                            close=True, timeout=timeout * 0.8, executor_wait=False
+                        )
+                        for nanny in nannies
+                    ]
                 )
-
-                raise TimeoutError(
-                    f"{len(bad_nannies)}/{len(nannies)} nanny worker(s) did not shut down within {timeout}s"
-                )
+                try:
+                    resps = await wait_for(resps, timeout)
+                except TimeoutError:
+                    logger.error(
+                        "Nannies didn't report back restarted within "
+                        "timeout.  Continuing with restart process"
+                    )
+                else:
+                    if not all(resp == "OK" for resp in resps):
+                        logger.error(
+                            "Not all workers responded positively: %s",
+                            resps,
+                            exc_info=True,
+                        )
 
         self.log_event([client, "all"], {"action": "restart", "client": client})
 
