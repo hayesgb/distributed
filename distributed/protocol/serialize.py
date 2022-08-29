@@ -25,6 +25,8 @@ from distributed.protocol.utils import (
     unpack_frames,
 )
 from distributed.utils import ensure_memoryview, has_keyword
+from numpy import ndarray
+from pandas import DataFrame
 
 dask_serialize = dask.utils.Dispatch("dask_serialize")
 dask_deserialize = dask.utils.Dispatch("dask_deserialize")
@@ -263,18 +265,12 @@ def serialize(  # type: ignore[no-untyped-def]
     if isinstance(x, Serialized):
         return x.header, x.frames
     if isinstance(x, Serialize):
-        try:
-            iterate_collection = x.iterate_collection
-        except AttributeError:
-            iterate_collection = True
-        if isinstance(x.data, str):
-            import pdb;pdb.set_trace()
         return serialize(
             x.data,
             serializers=serializers,
             on_error=on_error,
             context=context,
-            iterate_collection=iterate_collection,
+            iterate_collection=x.iterate_collection,
         )
 
     # Note: don't use isinstance(), as it would match subclasses
@@ -304,9 +300,9 @@ def serialize(  # type: ignore[no-untyped-def]
 
     if (
         type(x) in (list, set, tuple)
-        and iterate_collection
+        and iterate_collection is True
         or type(x) is dict
-        and iterate_collection
+        and iterate_collection is True
         and dict_safe
     ):
         if isinstance(x, dict):
@@ -324,7 +320,7 @@ def serialize(  # type: ignore[no-untyped-def]
                     obj, serializers=serializers, on_error=on_error, context=context
                 )
                 for obj in x
-            ]
+            ]             
 
         frames = []
         lengths = []
@@ -340,6 +336,7 @@ def serialize(  # type: ignore[no-untyped-def]
             "is-collection": True,
             "frame-lengths": lengths,
             "type-serialized": type(x).__name__,
+            "iterate_collection": iterate_collection,
         }
         if any(compression is not None for compression in compressions):
             headers["compression"] = compressions
@@ -352,6 +349,7 @@ def serialize(  # type: ignore[no-untyped-def]
         try:
             header, frames = dumps(x, context=context) if wants_context else dumps(x)
             header["serializer"] = name
+            header["iterate_collection"] = iterate_collection
             return header, frames
         except NotImplementedError:
             continue
@@ -447,7 +445,7 @@ def serialize_and_split(
     serialize
     merge_and_deserialize
     """
-    # import pdb;pdb.set_trace()
+
     header, frames = serialize(x, serializers, on_error, context)
     num_sub_frames = []
     offsets = []
@@ -520,7 +518,19 @@ class Serialize:
 
     def __init__(self, data):
         self.data = data
-        self.iterate_collection = check_dask_serializable(data)
+        if isinstance(self.data, (list, set, dict)):
+            self.iterate_collection = check_dask_serializable(self.data)
+        elif isinstance(self.data, tuple):
+            # The task graph will always be a tuple or a string, so we must
+            # iterate through these
+            self.iterate_collection = True
+        elif isinstance(self.data, (ndarray, DataFrame)):
+            # These get serialized directly.  Here we set iterate_collection = True
+            # to be consistent with the logic in serialize()
+            self.iterate_collection = False
+        else:
+            # We revert to the default behavior if the dtype is not known
+            self.iterate_collection = True
 
     def __repr__(self):
         return f"<Serialize: {self.data}>"
