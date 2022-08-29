@@ -263,12 +263,18 @@ def serialize(  # type: ignore[no-untyped-def]
     if isinstance(x, Serialized):
         return x.header, x.frames
     if isinstance(x, Serialize):
+        try:
+            iterate_collection = x.iterate_collection
+        except AttributeError:
+            iterate_collection = True
+        if isinstance(x.data, str):
+            import pdb;pdb.set_trace()
         return serialize(
             x.data,
             serializers=serializers,
             on_error=on_error,
             context=context,
-            iterate_collection=True,
+            iterate_collection=iterate_collection,
         )
 
     # Note: don't use isinstance(), as it would match subclasses
@@ -441,6 +447,7 @@ def serialize_and_split(
     serialize
     merge_and_deserialize
     """
+    # import pdb;pdb.set_trace()
     header, frames = serialize(x, serializers, on_error, context)
     num_sub_frames = []
     offsets = []
@@ -513,6 +520,7 @@ class Serialize:
 
     def __init__(self, data):
         self.data = data
+        self.iterate_collection = check_dask_serializable(data)
 
     def __repr__(self):
         return f"<Serialize: {self.data}>"
