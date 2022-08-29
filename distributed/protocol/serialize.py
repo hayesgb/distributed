@@ -10,6 +10,8 @@ from types import ModuleType
 from typing import Any, Literal
 
 import msgpack
+from numpy import ndarray
+from pandas import DataFrame
 
 import dask
 from dask.base import normalize_token
@@ -25,8 +27,6 @@ from distributed.protocol.utils import (
     unpack_frames,
 )
 from distributed.utils import ensure_memoryview, has_keyword
-from numpy import ndarray
-from pandas import DataFrame
 
 dask_serialize = dask.utils.Dispatch("dask_serialize")
 dask_deserialize = dask.utils.Dispatch("dask_deserialize")
@@ -320,7 +320,7 @@ def serialize(  # type: ignore[no-untyped-def]
                     obj, serializers=serializers, on_error=on_error, context=context
                 )
                 for obj in x
-            ]             
+            ]
 
         frames = []
         lengths = []
