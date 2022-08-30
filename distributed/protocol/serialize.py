@@ -11,7 +11,7 @@ from typing import Any, Literal
 
 import msgpack
 from numpy import ndarray
-from pandas import DataFrame
+from pandas import DataFrame, Series
 
 import dask
 from dask.base import normalize_token
@@ -208,6 +208,20 @@ def check_dask_serializable(x):
             pass
     return False
 
+def _infer_iterate_collection(data):
+    if isinstance(data, (list, set, dict)):
+        return check_dask_serializable(data)
+    elif isinstance(data, tuple):
+        # Components of the task graph can present as a tuple or a string, so we must
+        # iterate through these
+        return True
+    elif isinstance(data, (ndarray, DataFrame, Series)):
+        # These get serialized directly.  Here we set iterate_collection = True
+        # to be consistent with the logic in serialize()
+        return False
+    else:
+        # We revert to the default behavior if the dtype is not known
+        return True
 
 def serialize(  # type: ignore[no-untyped-def]
     x: object,
@@ -282,12 +296,18 @@ def serialize(  # type: ignore[no-untyped-def]
             #       (see GitHub #3716), so we should iterate
             #       through the list if "msgpack" comes before "pickle"
             #       in the list of serializers.
+            # Note:  This turns out to potentially cause unneeded iteration
+            #    Alternatively, we can pass the serializer and type-serialized
+            #    in the message headers, and reconstruct this during
+            #    deserialization.
             iterate_collection = ("pickle" not in serializers) or (
                 serializers.index("pickle") > serializers.index("msgpack")
             )
         if not iterate_collection:
             # Check for "dask"-serializable data in dict/list/set
-            iterate_collection = check_dask_serializable(x)
+            # By inference
+            # iterate_collection = check_dask_serializable(x)
+            iterate_collection = _infer_iterate_collection(x)
 
     # Determine whether keys are safe to be serialized with msgpack
     if type(x) is dict and iterate_collection:
@@ -350,6 +370,7 @@ def serialize(  # type: ignore[no-untyped-def]
             header, frames = dumps(x, context=context) if wants_context else dumps(x)
             header["serializer"] = name
             header["iterate_collection"] = iterate_collection
+            header["type-serialized"] = type(x).__name__
             return header, frames
         except NotImplementedError:
             continue
@@ -427,7 +448,18 @@ def deserialize(header, frames, deserializers=None):
             "data with %s" % (name, str(list(deserializers)))
         )
     dumps, loads, wants_context = families[name]
-    return loads(header, frames)
+    type_serialized = eval(header["type-serialized"])
+    output = loads(header, frames)
+
+    try:
+        assert isinstance(output, type_serialized)
+    except AssertionError:
+        # msgpack converts all lists to tuples.  Here we validate
+        # the expected datatype is returned
+        if type(output) is tuple and type_serialized is list:
+            output = list(output)
+
+    return output
 
 
 def serialize_and_split(
@@ -518,19 +550,7 @@ class Serialize:
 
     def __init__(self, data):
         self.data = data
-        if isinstance(self.data, (list, set, dict)):
-            self.iterate_collection = check_dask_serializable(self.data)
-        elif isinstance(self.data, tuple):
-            # The task graph will always be a tuple or a string, so we must
-            # iterate through these
-            self.iterate_collection = True
-        elif isinstance(self.data, (ndarray, DataFrame)):
-            # These get serialized directly.  Here we set iterate_collection = True
-            # to be consistent with the logic in serialize()
-            self.iterate_collection = False
-        else:
-            # We revert to the default behavior if the dtype is not known
-            self.iterate_collection = True
+        self.iterate_collection = _infer_iterate_collection(self.data)
 
     def __repr__(self):
         return f"<Serialize: {self.data}>"
