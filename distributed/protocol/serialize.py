@@ -210,7 +210,7 @@ def check_dask_serializable(x):
 
 def _infer_iterate_collection(data):
 
-    if isinstance(data, ndarray, DataFrame, Series):
+    if isinstance(data, (ndarray, DataFrame, Series)):
         return False
     if isinstance(data, (list, set, dict)):
         if all(not callable(d) for d in data):
@@ -292,6 +292,7 @@ def serialize(  # type: ignore[no-untyped-def]
     # Note: don't use isinstance(), as it would match subclasses
     # (e.g. namedtuple, defaultdict) which however would revert to the base class on a
     # round-trip through msgpack
+    import pdb;pdb.set_trace()
     if iterate_collection is None and type(x) in (list, set, tuple, dict):
         if type(x) is list and "msgpack" in serializers:
             # Note: "msgpack" will always convert lists to tuples
@@ -308,8 +309,8 @@ def serialize(  # type: ignore[no-untyped-def]
         if not iterate_collection:
             # Check for "dask"-serializable data in dict/list/set
             # By inference
-            # iterate_collection = check_dask_serializable(x)
-            iterate_collection = _infer_iterate_collection(x)
+            iterate_collection = check_dask_serializable(x)
+            # iterate_collection = _infer_iterate_collection(x)
 
     # Determine whether keys are safe to be serialized with msgpack
     if type(x) is dict and iterate_collection:
@@ -322,9 +323,9 @@ def serialize(  # type: ignore[no-untyped-def]
 
     if (
         type(x) in (list, set, tuple)
-        and iterate_collection is True
+        and iterate_collection
         or type(x) is dict
-        and iterate_collection is True
+        and iterate_collection
         and dict_safe
     ):
         if isinstance(x, dict):
@@ -341,7 +342,6 @@ def serialize(  # type: ignore[no-untyped-def]
             headers_frames = [
                 serialize(
                     obj, serializers=serializers, on_error=on_error, context=context,
-                    iterate_collection=iterate_collection
                 )
                 for obj in x
             ]
@@ -558,6 +558,10 @@ class Serialize:
     """
 
     def __init__(self, data):
+        try:
+            if isinstance(data[0], Serialized):
+                pass
+        except TypeError:  pass
         self.data = data
         self.iterate_collection = _infer_iterate_collection(self.data)
 
