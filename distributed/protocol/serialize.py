@@ -213,6 +213,8 @@ def _infer_iterate_collection(data):
     if isinstance(data, (ndarray, DataFrame, Series)):
         return False
     if isinstance(data, (list, set, dict)):
+        if any(isinstance(d, Serialized) for d in data):
+            return True
         if all(not callable(d) for d in data):
             return check_dask_serializable(data)
         return True
@@ -281,8 +283,6 @@ def serialize(  # type: ignore[no-untyped-def]
     if isinstance(x, Serialized):
         return x.header, x.frames
     if isinstance(x, Serialize):
-        if x.data is None:
-            import pdb;pdb.set_trace()
         return serialize(
             x.data,
             serializers=serializers,
@@ -294,9 +294,7 @@ def serialize(  # type: ignore[no-untyped-def]
     # Note: don't use isinstance(), as it would match subclasses
     # (e.g. namedtuple, defaultdict) which however would revert to the base class on a
     # round-trip through msgpack
-    import numpy as np
-    if type(x) not in (tuple, bytes, np.int64, list):
-        print(x, type(x), iterate_collection)
+
     if iterate_collection is None and type(x) in (list, set, tuple, dict):
         if type(x) is list and "msgpack" in serializers:
             # Note: "msgpack" will always convert lists to tuples
@@ -419,7 +417,6 @@ def deserialize(header, frames, deserializers=None):
     """
 
     if "is-collection" in header:
-        print(headers, lengths)
         headers = header["sub-headers"]
         lengths = header["frame-lengths"]
         cls = {"tuple": tuple, "list": list, "set": set, "dict": dict}[
@@ -562,12 +559,10 @@ class Serialize:
     """
 
     def __init__(self, data):
-        try:
-            if isinstance(data[0], Serialized):
-                pass
-        except TypeError:  pass
         self.data = data
         self.iterate_collection = _infer_iterate_collection(self.data)
+        # if self.iterate_collection is False:
+        #     import pdb;pdb.set_trace()
 
     def __repr__(self):
         return f"<Serialize: {self.data}>"
