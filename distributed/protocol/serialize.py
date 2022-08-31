@@ -212,18 +212,20 @@ def _infer_iterate_collection(data):
 
     if isinstance(data, (ndarray, DataFrame, Series)):
         return False
-    if isinstance(data, (list, set, dict)):
+    if isinstance(data, (list, set)):
+        # data = list(set(data))
         if any(isinstance(d, Serialized) for d in data):
             return True
         if all(not callable(d) for d in data):
             return check_dask_serializable(data)
         return True
-    elif isinstance(data, tuple):
-        # Components of the task graph can present as a tuple or a string, so we must
-        # iterate through these
-        return True
+    if isinstance(data, dict):
+        return check_dask_serializable(data)
     else:
         # We revert to the default behavior if the dtype is not known
+        # We also return true for tuples, since components of the task
+        # graph can present as a tuple or a string, so we choose to
+        # iterate through these
         return True
 
 def serialize(  # type: ignore[no-untyped-def]
@@ -325,9 +327,9 @@ def serialize(  # type: ignore[no-untyped-def]
 
     if (
         type(x) in (list, set, tuple)
-        and iterate_collection
+        and iterate_collection is True
         or type(x) is dict
-        and iterate_collection
+        and iterate_collection is True
         and dict_safe
     ):
         if isinstance(x, dict):
