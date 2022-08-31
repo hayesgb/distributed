@@ -209,16 +209,17 @@ def check_dask_serializable(x):
     return False
 
 def _infer_iterate_collection(data):
+
+    if isinstance(data, ndarray, DataFrame, Series):
+        return False
     if isinstance(data, (list, set, dict)):
-        return check_dask_serializable(data)
+        if all(not callable(d) for d in data):
+            return check_dask_serializable(data)
+        return True
     elif isinstance(data, tuple):
         # Components of the task graph can present as a tuple or a string, so we must
         # iterate through these
         return True
-    elif isinstance(data, (ndarray, DataFrame, Series)):
-        # These get serialized directly.  Here we set iterate_collection = True
-        # to be consistent with the logic in serialize()
-        return False
     else:
         # We revert to the default behavior if the dtype is not known
         return True
@@ -230,7 +231,7 @@ def serialize(  # type: ignore[no-untyped-def]
     context=None,
     iterate_collection: bool | None = None,
 ) -> tuple[dict[str, Any], list[bytes | memoryview]]:
-    r"""
+    """
     Convert object to a header and list of bytestrings
 
     This takes in an arbitrary Python object and returns a msgpack serializable
@@ -271,6 +272,7 @@ def serialize(  # type: ignore[no-untyped-def]
     to_serialize : Mark that data in a message should be serialized
     register_serialization : Register custom serialization functions
     """
+
     if serializers is None:
         serializers = ("dask", "pickle")  # TODO: get from configuration
 
@@ -329,7 +331,8 @@ def serialize(  # type: ignore[no-untyped-def]
             headers_frames = []
             for k, v in x.items():
                 _header, _frames = serialize(
-                    v, serializers=serializers, on_error=on_error, context=context
+                    v, serializers=serializers, on_error=on_error, context=context,
+                    iterate_collection=iterate_collection
                 )
                 _header["key"] = k
                 headers_frames.append((_header, _frames))
@@ -337,7 +340,8 @@ def serialize(  # type: ignore[no-untyped-def]
             assert isinstance(x, (list, set, tuple))
             headers_frames = [
                 serialize(
-                    obj, serializers=serializers, on_error=on_error, context=context
+                    obj, serializers=serializers, on_error=on_error, context=context,
+                    iterate_collection=iterate_collection
                 )
                 for obj in x
             ]
@@ -370,7 +374,7 @@ def serialize(  # type: ignore[no-untyped-def]
             header, frames = dumps(x, context=context) if wants_context else dumps(x)
             header["serializer"] = name
             header["iterate_collection"] = iterate_collection
-            header["type-serialized"] = type(x).__name__
+            header["object-type"] = type(x).__name__
             return header, frames
         except NotImplementedError:
             continue
@@ -409,7 +413,9 @@ def deserialize(header, frames, deserializers=None):
     --------
     serialize
     """
+
     if "is-collection" in header:
+        print(headers, lengths)
         headers = header["sub-headers"]
         lengths = header["frame-lengths"]
         cls = {"tuple": tuple, "list": list, "set": set, "dict": dict}[
@@ -448,16 +454,20 @@ def deserialize(header, frames, deserializers=None):
             "data with %s" % (name, str(list(deserializers)))
         )
     dumps, loads, wants_context = families[name]
-    type_serialized = eval(header["type-serialized"])
     output = loads(header, frames)
 
-    try:
-        assert isinstance(output, type_serialized)
-    except AssertionError:
+    if header.get("object-type", None) is not None and name == "msgpack":
         # msgpack converts all lists to tuples.  Here we validate
-        # the expected datatype is returned
-        if type(output) is tuple and type_serialized is list:
-            output = list(output)
+        # the expected datatype is returned and convert back to a list
+        # if appropriate
+        # TODO: Consider converting iterables to Series or NDArrays
+        # for improved serialization performance
+        object_type = eval(header["object-type"])
+        try:
+            assert isinstance(output, object_type)
+        except AssertionError:
+            if type(output) is tuple and object_type is list:
+                output = list(output)
 
     return output
 
@@ -477,7 +487,6 @@ def serialize_and_split(
     serialize
     merge_and_deserialize
     """
-
     header, frames = serialize(x, serializers, on_error, context)
     num_sub_frames = []
     offsets = []
