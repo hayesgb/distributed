@@ -213,11 +213,11 @@ def _infer_iterate_collection(data):
     if isinstance(data, (ndarray, DataFrame, Series)):
         return False
     if isinstance(data, (list, set)):
-        # data = list(set(data))
         if any(isinstance(d, Serialized) for d in data):
             return True
         if all(not callable(d) for d in data):
             return check_dask_serializable(data)
+        import pdb;pdb.set_trace()
         return True
     if isinstance(data, dict):
         return check_dask_serializable(data)
@@ -314,7 +314,6 @@ def serialize(  # type: ignore[no-untyped-def]
             # Check for "dask"-serializable data in dict/list/set
             # By inference
             iterate_collection = check_dask_serializable(x)
-            # iterate_collection = _infer_iterate_collection(x)
 
     # Determine whether keys are safe to be serialized with msgpack
     if type(x) is dict and iterate_collection:
@@ -459,7 +458,7 @@ def deserialize(header, frames, deserializers=None):
     dumps, loads, wants_context = families[name]
     output = loads(header, frames)
 
-    if header.get("object-type", None) is not None and name == "msgpack":
+    if header.get("object-type", None) in ["tuple"] and name == "msgpack":
         # msgpack converts all lists to tuples.  Here we validate
         # the expected datatype is returned and convert back to a list
         # if appropriate
@@ -563,8 +562,6 @@ class Serialize:
     def __init__(self, data):
         self.data = data
         self.iterate_collection = _infer_iterate_collection(self.data)
-        # if self.iterate_collection is False:
-        #     import pdb;pdb.set_trace()
 
     def __repr__(self):
         return f"<Serialize: {self.data}>"
