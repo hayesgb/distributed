@@ -292,7 +292,9 @@ def serialize(  # type: ignore[no-untyped-def]
     # Note: don't use isinstance(), as it would match subclasses
     # (e.g. namedtuple, defaultdict) which however would revert to the base class on a
     # round-trip through msgpack
-    import pdb;pdb.set_trace()
+    import numpy as np
+    if type(x) not in (tuple, bytes, np.int64, list):
+        print(x, type(x), iterate_collection)
     if iterate_collection is None and type(x) in (list, set, tuple, dict):
         if type(x) is list and "msgpack" in serializers:
             # Note: "msgpack" will always convert lists to tuples
