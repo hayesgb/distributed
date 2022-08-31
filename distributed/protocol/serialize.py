@@ -281,6 +281,8 @@ def serialize(  # type: ignore[no-untyped-def]
     if isinstance(x, Serialized):
         return x.header, x.frames
     if isinstance(x, Serialize):
+        if x.data is None:
+            import pdb;pdb.set_trace()
         return serialize(
             x.data,
             serializers=serializers,
